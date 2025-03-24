@@ -3,6 +3,7 @@ import { authService } from "../services/auth.service";
 import { InlineKeyboard } from "grammy";
 import axios from "axios";
 import { createBackToMenuKeyboard } from "../utils/keyboards";
+import { getKYCStatus, getUser } from "../utils/api";
 
 export class AuthHandler {
   private static instance: AuthHandler;
@@ -10,8 +11,6 @@ export class AuthHandler {
     number,
     { email?: string; waitingForOTP: boolean; sid?: string }
   > = new Map();
-  private readonly API_BASE_URL =
-    process.env.COPPERX_API_BASE_URL || "https://income-api.copperx.io";
 
   private constructor() {}
 
@@ -122,11 +121,7 @@ export class AuthHandler {
     }
 
     try {
-      const response = await axios.get(`${this.API_BASE_URL}/api/auth/me`, {
-        headers: await authService.getHeaders(chatId),
-      });
-
-      const user = response.data;
+      const user = await getUser(chatId);
 
       const message = `
 👤 *Your CopperX Profile*
@@ -182,11 +177,9 @@ Use /wallets to manage your wallets`;
     }
 
     try {
-      const response = await axios.get(`${this.API_BASE_URL}/api/kycs`, {
-        headers: await authService.getHeaders(chatId),
-      });
+      const kycResponse = await getKYCStatus(chatId);
 
-      const kycData = response.data.data[0];
+      const kycData = kycResponse.data[0];
       const status = kycData.status.toUpperCase();
 
       let message = `
@@ -201,7 +194,9 @@ Use /wallets to manage your wallets`;
 ⏳ Your KYC verification is being processed.
 We'll notify you once the verification is complete.
 
-*Submission Date:* ${new Date(kycData.createdAt).toLocaleDateString()}`;
+*Submission Date:* ${new Date(kycData.createdAt).toLocaleDateString()}
+
+You can check your KYC status in detail on the CopperX web app.`;
           break;
 
         case "approved":
@@ -245,12 +240,18 @@ Click below to start the verification process.`;
       }
 
       const keyboard = new InlineKeyboard();
+
+      if (status.toLowerCase() === "pending") {
+        keyboard.url("�� Check on Web App", "https://payout.copperx.io/app");
+      }
+
       if (
         status.toLowerCase() === "none" ||
         status.toLowerCase() === "rejected"
       ) {
         keyboard.text("📝 Start KYC", "start_kyc");
       }
+
       keyboard
         .text("👤 View Profile", "profile")
         .row()

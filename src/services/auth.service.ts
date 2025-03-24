@@ -4,13 +4,9 @@ import {
   EmailOTPRequest,
   EmailOTPAuthenticate,
   UserProfile,
-  KYCStatus,
 } from "../utils/types";
 import { AppDataSource } from "../config/database";
 import { User } from "../entities/user.entity";
-
-const API_BASE_URL =
-  process.env.COPPERX_API_BASE_URL || "https://income-api.copperx.io";
 
 class AuthService {
   private static instance: AuthService;
@@ -35,7 +31,7 @@ class AuthService {
   public async requestEmailOTP(email: string): Promise<{ sid: string }> {
     const payload: EmailOTPRequest = { email };
     const response = await axios.post<{ sid: string }>(
-      `${API_BASE_URL}/api/auth/email-otp/request`,
+      `${process.env.COPPERX_API_BASE_URL}/api/auth/email-otp/request`,
       payload
     );
     return response.data;
@@ -49,7 +45,7 @@ class AuthService {
   ): Promise<AuthResponse> {
     const payload: EmailOTPAuthenticate = { email, otp, sid };
     const response = await axios.post<AuthResponse>(
-      `${API_BASE_URL}/api/auth/email-otp/authenticate`,
+      `${process.env.COPPERX_API_BASE_URL}/api/auth/email-otp/authenticate`,
       payload
     );
 
@@ -72,26 +68,15 @@ class AuthService {
     }
 
     const response = await axios.get<UserProfile>(
-      `${API_BASE_URL}/api/auth/me`,
+      `${process.env.COPPERX_API_BASE_URL}/api/auth/me`,
       { headers: await this.getHeaders(chatId) }
     );
 
-    // Only update non-sensitive fields
     user.email = response.data.email;
     user.name = response.data.firstName + " " + response.data.lastName;
     await this.userRepository.save(user);
 
     return response.data;
-  }
-
-  public async getKYCStatus(chatId: number): Promise<KYCStatus[]> {
-    const response = await axios.get<{ data: KYCStatus[] }>(
-      `${API_BASE_URL}/api/kycs`,
-      {
-        headers: await this.getHeaders(chatId),
-      }
-    );
-    return response.data.data;
   }
 
   public async isAuthenticated(chatId: number): Promise<boolean> {
@@ -116,7 +101,6 @@ class AuthService {
       throw new Error("User not found");
     }
 
-    // Decrypt the token before using it
     return user.getDecryptedAccessToken();
   }
 }

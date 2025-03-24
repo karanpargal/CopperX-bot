@@ -7,11 +7,23 @@ import {
   createConfirmationKeyboard,
 } from "../utils/keyboards";
 import { BankQuote } from "../utils/types";
+import {
+  formatBalances,
+  getTypeEmoji,
+  isValidAmount,
+  isValidEmail,
+} from "../utils/helper";
+import {
+  getAccounts,
+  getDefaultWallet,
+  getPayees,
+  getTransfers,
+  getWalletBalances,
+  savePayee,
+} from "../utils/api";
 
 export class TransferHandler {
   private static instance: TransferHandler;
-  private readonly API_BASE_URL =
-    process.env.COPPERX_API_BASE_URL || "https://income-api.copperx.io";
   private userStates: Map<
     number,
     {
@@ -52,15 +64,10 @@ export class TransferHandler {
     }
 
     try {
-      // Fetch existing payees
-      const response = await axios.get(
-        `${this.API_BASE_URL}/api/payees?page=1&limit=10`,
-        { headers: await authService.getHeaders(chatId) }
-      );
+      const response = await getPayees(chatId);
 
-      const payees = response.data.data;
+      const payees = response;
 
-      // Create keyboard with payees
       const keyboard = new InlineKeyboard();
 
       if (payees && payees.length > 0) {
@@ -131,12 +138,12 @@ export class TransferHandler {
     }
 
     try {
-      const balances = await this.fetchBalances(chatId);
+      const balances = await getWalletBalances(chatId);
       const message = `
 🔄 *External Wallet Transfer*
 
 Available balances:
-${this.formatBalances(balances)}
+${formatBalances(balances)}
 
 Please enter the recipient's wallet address:`;
 
@@ -182,16 +189,12 @@ Please enter the recipient's wallet address:`;
 
     try {
       const [balancesResponse, defaultWalletResponse] = await Promise.all([
-        axios.get(`${this.API_BASE_URL}/api/wallets/balances`, {
-          headers: await authService.getHeaders(chatId),
-        }),
-        axios.get(`${this.API_BASE_URL}/api/wallets/default`, {
-          headers: await authService.getHeaders(chatId),
-        }),
+        getWalletBalances(chatId),
+        getDefaultWallet(chatId),
       ]);
 
-      const balances = balancesResponse.data;
-      const defaultWallet = defaultWalletResponse.data;
+      const balances = balancesResponse;
+      const defaultWallet = defaultWalletResponse;
 
       if (!balances || balances.length === 0) {
         await ctx.reply(
@@ -208,12 +211,9 @@ Please enter the recipient's wallet address:`;
         (w: any) => w.walletId === defaultWallet.id
       );
 
-      const accountsResponse = await axios.get(
-        `${this.API_BASE_URL}/api/accounts`,
-        { headers: await authService.getHeaders(chatId) }
-      );
+      const accountsResponse = await getAccounts(chatId);
 
-      const accounts = accountsResponse.data.data;
+      const accounts = accountsResponse.data;
       const bankAccounts = accounts.filter(
         (account: any) => account.type === "bank_account"
       );
@@ -245,8 +245,6 @@ Please enter the recipient's wallet address:`;
         }
       });
       keyboard.text("« Back to Menu", "main_menu");
-
-      console.log(defaultWalletBalance.balances);
 
       const balanceMessage = defaultWalletBalance
         ? defaultWalletBalance.balances
@@ -311,12 +309,9 @@ Please enter the recipient's wallet address:`;
     }
 
     try {
-      const response = await axios.get(
-        `${this.API_BASE_URL}/api/transfers?page=1&limit=10`,
-        { headers: await authService.getHeaders(chatId) }
-      );
+      const response = await getTransfers(chatId);
 
-      const transfers = response.data.data;
+      const transfers = response.data;
       if (!transfers || transfers.length === 0) {
         await ctx.reply(
           "📊 No recent transfers found.\n\n" +
@@ -333,21 +328,6 @@ Please enter the recipient's wallet address:`;
 
       const formatAmount = (amount: number, symbol: string = "USDC") => {
         return `${(amount / Math.pow(10, 8)).toFixed(2)} ${symbol}`;
-      };
-
-      const getTypeEmoji = (type: string) => {
-        switch (type.toLowerCase()) {
-          case "deposit":
-            return "📥";
-          case "withdraw":
-            return "📤";
-          case "send":
-            return "➡️";
-          case "receive":
-            return "⬅️";
-          default:
-            return "💸";
-        }
       };
 
       const message = `
@@ -418,17 +398,18 @@ Use /send_to_email to send via email or /withdraw for bank withdrawals.`;
     try {
       switch (userState.action) {
         case "email_transfer":
-          // Handle new recipient flow
           if (userState.step === "new_recipient") {
-            if (!this.isValidEmail(text)) {
+            if (!isValidEmail(text)) {
               await ctx.reply("❌ Invalid email address. Please try again:", {
                 reply_markup: createBackToMenuKeyboard(),
               });
               return;
             }
 
-            // Save the new payee
-            const saveResult = await this.savePayee(chatId, text);
+            const saveResult = await savePayee(chatId, {
+              email: text,
+              nickName: text.split("@")[0],
+            });
             if (!saveResult) {
               await ctx.reply(
                 "⚠️ Could not save the recipient, but you can still proceed with the transfer.",
@@ -436,27 +417,20 @@ Use /send_to_email to send via email or /withdraw for bank withdrawals.`;
               );
             }
 
-            // Fetch user's default wallet balance
             try {
               const [balancesResponse, defaultWalletResponse] =
                 await Promise.all([
-                  axios.get(`${this.API_BASE_URL}/api/wallets/balances`, {
-                    headers: await authService.getHeaders(chatId),
-                  }),
-                  axios.get(`${this.API_BASE_URL}/api/wallets/default`, {
-                    headers: await authService.getHeaders(chatId),
-                  }),
+                  getWalletBalances(chatId),
+                  getDefaultWallet(chatId),
                 ]);
 
-              const balances = balancesResponse.data;
-              const defaultWallet = defaultWalletResponse.data;
+              const balances = balancesResponse;
+              const defaultWallet = defaultWalletResponse;
 
-              // Find the balance for the default wallet
               const defaultWalletBalance = balances.find(
                 (w: any) => w.walletId === defaultWallet.id
               );
 
-              // Format the balance message
               let balanceMessage = "No balance found in default wallet";
               if (defaultWalletBalance) {
                 balanceMessage = defaultWalletBalance.balances
@@ -484,7 +458,6 @@ Use /send_to_email to send via email or /withdraw for bank withdrawals.`;
             } catch (error) {
               console.error("Error fetching wallet balance:", error);
 
-              // Fallback if we can't get the balance
               this.userStates.set(chatId, {
                 ...userState,
                 recipient: text,
@@ -502,7 +475,7 @@ Use /send_to_email to send via email or /withdraw for bank withdrawals.`;
 
           if (userState.step === "amount" && userState.recipient) {
             const amount = text.trim();
-            if (!this.isValidAmount(amount)) {
+            if (!isValidAmount(amount)) {
               await ctx.reply(
                 '❌ Invalid amount format. Please use format: "100"',
                 { reply_markup: createBackToMenuKeyboard() }
@@ -538,14 +511,17 @@ Use /send_to_email to send via email or /withdraw for bank withdrawals.`;
           }
 
           if (!userState.recipient && userState.step === "recipient") {
-            if (!this.isValidEmail(text)) {
+            if (!isValidEmail(text)) {
               await ctx.reply("❌ Invalid email address. Please try again:", {
                 reply_markup: createBackToMenuKeyboard(),
               });
               return;
             }
 
-            await this.savePayee(chatId, text);
+            await savePayee(chatId, {
+              email: text,
+              nickName: text.split("@")[0],
+            });
 
             this.userStates.set(chatId, {
               ...userState,
@@ -578,7 +554,7 @@ Use /send_to_email to send via email or /withdraw for bank withdrawals.`;
           }
 
           if (!userState.amount) {
-            if (!this.isValidAmount(text)) {
+            if (!isValidAmount(text)) {
               await ctx.reply(
                 "❌ Invalid format.\n\n" + 'Please use format: "100"',
                 {
@@ -608,7 +584,7 @@ Use /send_to_email to send via email or /withdraw for bank withdrawals.`;
         case "bank_withdrawal":
           if (!userState.amount && userState.bankAccountId) {
             const [amount] = text.split(" ");
-            if (!this.isValidAmount(amount)) {
+            if (!isValidAmount(amount)) {
               await ctx.reply(
                 "❌ Invalid format.\n\n" + "Please use format: '100'",
                 {
@@ -630,7 +606,7 @@ Use /send_to_email to send via email or /withdraw for bank withdrawals.`;
 
             try {
               const quoteResponse = await axios.post(
-                `${this.API_BASE_URL}/api/quotes/offramp`,
+                `${process.env.COPPERX_API_BASE_URL}/api/quotes/offramp`,
                 {
                   amount: (Number(amount) * Math.pow(10, 8)).toString(),
                   currency: "USDC",
@@ -693,7 +669,7 @@ Would you like to proceed with this withdrawal?`;
             if (text.toLowerCase() === "confirm") {
               try {
                 await axios.post(
-                  `${this.API_BASE_URL}/api/transfers/offramp`,
+                  `${process.env.COPPERX_API_BASE_URL}/api/transfers/offramp`,
                   {
                     quotePayload: userState.quote.quotePayload,
                     quoteSignature: userState.quote.quoteSignature,
@@ -743,27 +719,6 @@ Would you like to proceed with this withdrawal?`;
     }
   }
 
-  private getTransferTypeEmoji(type: string): string {
-    switch (type.toLowerCase()) {
-      case "email_transfer":
-        return "📧";
-      case "wallet_transfer":
-        return "🔄";
-      case "bank_withdrawal":
-        return "🏦";
-      default:
-        return "💸";
-    }
-  }
-
-  private isValidEmail(email: string): boolean {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-  }
-
-  private isValidAmount(amount: string): boolean {
-    return !isNaN(Number(amount)) && Number(amount) > 0;
-  }
-
   private async sendConfirmation(
     ctx: Context,
     details: {
@@ -796,117 +751,6 @@ ${
     await ctx.reply(message, {
       parse_mode: "Markdown",
       reply_markup: createConfirmationKeyboard(),
-    });
-  }
-
-  private async fetchBalances(chatId: number) {
-    const response = await axios.get(
-      `${this.API_BASE_URL}/api/wallets/balances`,
-      { headers: await authService.getHeaders(chatId) }
-    );
-    return response.data;
-  }
-
-  private formatBalances(balances: any[]) {
-    return balances
-      .map((wallet: any) =>
-        wallet.balances
-          .map((b: any) => `• ${b.symbol}: ${Number(b.balance).toFixed(6)}`)
-          .join("\n")
-      )
-      .join("\n");
-  }
-
-  private async handleAmountInput(ctx: Context, text: string): Promise<void> {
-    const chatId = ctx.from?.id;
-    if (!chatId) return;
-
-    const userState = this.userStates.get(chatId);
-    if (!userState) return;
-
-    const amount = parseFloat(text);
-    if (isNaN(amount) || amount <= 0) {
-      await ctx.reply(
-        "❌ Invalid amount. Please enter a valid positive number:",
-        {
-          reply_markup: createBackToMenuKeyboard(),
-        }
-      );
-      return;
-    }
-
-    if (userState.symbol === "USDC") {
-      const minAmount = userState.action === "bank_withdrawal" ? 50 : 1;
-      if (amount < minAmount) {
-        await ctx.reply(
-          `❌ Minimum amount for ${
-            userState.action === "bank_withdrawal"
-              ? "bank withdrawals"
-              : "transfers"
-          } is ${minAmount} USDC.\n\n` + "Please enter a larger amount:",
-          {
-            reply_markup: createBackToMenuKeyboard(),
-          }
-        );
-        return;
-      }
-    }
-
-    userState.amount = amount.toString();
-    userState.step = "confirmation";
-    userState.confirmationPending = true;
-    this.userStates.set(chatId, userState);
-
-    await this.sendConfirmation(ctx, {
-      recipient: userState.recipient ?? "",
-      amount: userState.amount ?? "",
-      symbol: userState.symbol ?? "USDC",
-      type: userState.action === "email_transfer" ? "email" : "wallet",
-    });
-  }
-
-  private async handleWalletAmountInput(
-    ctx: Context,
-    text: string
-  ): Promise<void> {
-    const chatId = ctx.from?.id;
-    if (!chatId) return;
-
-    const userState = this.userStates.get(chatId);
-    if (!userState) return;
-
-    const amount = parseFloat(text);
-    if (isNaN(amount) || amount <= 0) {
-      await ctx.reply(
-        "❌ Invalid amount. Please enter a valid positive number:",
-        {
-          reply_markup: createBackToMenuKeyboard(),
-        }
-      );
-      return;
-    }
-
-    if (userState.symbol === "USDC" && amount < 1) {
-      await ctx.reply(
-        "❌ Minimum amount for wallet transfers is 1 USDC.\n\n" +
-          "Please enter a larger amount:",
-        {
-          reply_markup: createBackToMenuKeyboard(),
-        }
-      );
-      return;
-    }
-
-    userState.amount = amount.toString();
-    userState.step = "confirmation";
-    userState.confirmationPending = true;
-    this.userStates.set(chatId, userState);
-
-    await this.sendConfirmation(ctx, {
-      recipient: userState.recipient ?? "",
-      amount: userState.amount ?? "",
-      symbol: userState.symbol ?? "USDC",
-      type: "wallet",
     });
   }
 
@@ -953,25 +797,18 @@ ${
     if (!chatId) return;
 
     try {
-      // Fetch user's default wallet balance
       const [balancesResponse, defaultWalletResponse] = await Promise.all([
-        axios.get(`${this.API_BASE_URL}/api/wallets/balances`, {
-          headers: await authService.getHeaders(chatId),
-        }),
-        axios.get(`${this.API_BASE_URL}/api/wallets/default`, {
-          headers: await authService.getHeaders(chatId),
-        }),
+        getWalletBalances(chatId),
+        getDefaultWallet(chatId),
       ]);
 
-      const balances = balancesResponse.data;
-      const defaultWallet = defaultWalletResponse.data;
+      const balances = balancesResponse;
+      const defaultWallet = defaultWalletResponse;
 
-      // Find the balance for the default wallet
       const defaultWalletBalance = balances.find(
         (w: any) => w.walletId === defaultWallet.id
       );
 
-      // Format the balance message
       let balanceMessage = "No balance found in default wallet";
       if (defaultWalletBalance) {
         balanceMessage = defaultWalletBalance.balances
@@ -1000,7 +837,6 @@ ${
     } catch (error) {
       console.error("Error fetching wallet balance:", error);
 
-      // Fallback if we can't get the balance
       const userState = this.userStates.get(chatId) || {};
       this.userStates.set(chatId, {
         ...userState,
@@ -1042,28 +878,6 @@ ${
     );
   }
 
-  private async savePayee(
-    chatId: number,
-    email: string,
-    nickName?: string
-  ): Promise<boolean> {
-    try {
-      const payload: any = {
-        email,
-        nickName: nickName || email.split("@")[0],
-      };
-
-      await axios.post(`${this.API_BASE_URL}/api/payees`, payload, {
-        headers: await authService.getHeaders(chatId),
-      });
-
-      return true;
-    } catch (error) {
-      console.error("Error saving payee:", error);
-      return false;
-    }
-  }
-
   private async promptForAmount(
     ctx: Context,
     recipient: string
@@ -1072,18 +886,13 @@ ${
     if (!chatId) return;
 
     try {
-      // Fetch user's default wallet balance
       const [balancesResponse, defaultWalletResponse] = await Promise.all([
-        axios.get(`${this.API_BASE_URL}/api/wallets/balances`, {
-          headers: await authService.getHeaders(chatId),
-        }),
-        axios.get(`${this.API_BASE_URL}/api/wallets/default`, {
-          headers: await authService.getHeaders(chatId),
-        }),
+        getWalletBalances(chatId),
+        getDefaultWallet(chatId),
       ]);
 
-      const balances = balancesResponse.data;
-      const defaultWallet = defaultWalletResponse.data;
+      const balances = balancesResponse;
+      const defaultWallet = defaultWalletResponse;
 
       const defaultWalletBalance = balances.find(
         (w: any) => w.walletId === defaultWallet.id

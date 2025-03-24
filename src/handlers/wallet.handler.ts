@@ -9,11 +9,16 @@ import {
   createBackToMenuKeyboard,
 } from "../utils/keyboards";
 import { InlineKeyboard } from "grammy";
+import {
+  getDefaultWallet,
+  getTransfers,
+  getWalletBalances,
+  getWallets,
+  setDefaultWallet,
+} from "../utils/api";
 
 export class WalletHandler {
   private static instance: WalletHandler;
-  private readonly API_BASE_URL =
-    process.env.COPPERX_API_BASE_URL || "https://income-api.copperx.io";
 
   private userStates: Map<
     number,
@@ -49,14 +54,12 @@ export class WalletHandler {
 
     try {
       const [walletsResponse, defaultWalletResponse] = await Promise.all([
-        this.fetchWallets(chatId),
-        axios.get(`${this.API_BASE_URL}/api/wallets/default`, {
-          headers: await authService.getHeaders(chatId),
-        }),
+        getWallets(chatId),
+        getDefaultWallet(chatId),
       ]);
 
       const wallets = walletsResponse;
-      const defaultWallet = defaultWalletResponse.data;
+      const defaultWallet = defaultWalletResponse;
 
       if (!wallets || wallets.length === 0) {
         await ctx.reply(
@@ -118,22 +121,15 @@ Use /setdefault to change your default wallet.`;
 
     try {
       const [balancesResponse, walletsResponse] = await Promise.all([
-        axios.get(`${this.API_BASE_URL}/api/wallets/balances`, {
-          headers: await authService.getHeaders(chatId),
-        }),
-        axios.get(`${this.API_BASE_URL}/api/wallets`, {
-          headers: await authService.getHeaders(chatId),
-        }),
+        getWalletBalances(chatId),
+        getWallets(chatId),
       ]);
 
-      const wallets = balancesResponse.data;
-      const walletsMap = walletsResponse.data.reduce(
-        (acc: any, wallet: Wallet) => {
-          acc[wallet.id] = wallet.walletAddress;
-          return acc;
-        },
-        {}
-      );
+      const wallets = balancesResponse;
+      const walletsMap = walletsResponse.reduce((acc: any, wallet: Wallet) => {
+        acc[wallet.id] = wallet.walletAddress;
+        return acc;
+      }, {});
 
       if (!wallets || wallets.length === 0) {
         await ctx.reply(
@@ -195,14 +191,10 @@ Use /deposit to add funds or /setdefault to change your default wallet.
 
     try {
       if (walletId) {
-        await axios.post(
-          `${this.API_BASE_URL}/api/wallets/default`,
-          { walletId },
-          { headers: await authService.getHeaders(chatId) }
-        );
+        await setDefaultWallet(chatId, walletId);
 
-        const wallet = (await this.fetchWallets(chatId)).find(
-          (w) => w.id === walletId
+        const wallet = (await getWallets(chatId)).find(
+          (w: any) => w.id === walletId
         );
         await ctx.reply(
           "✅ Default wallet updated successfully!\n\n" +
@@ -210,13 +202,13 @@ Use /deposit to add funds or /setdefault to change your default wallet.
             `\`${wallet?.walletAddress}\``,
           {
             parse_mode: "Markdown",
-            reply_markup: createMainMenuKeyboard(),
+            reply_markup: createMainMenuKeyboard(true),
           }
         );
         return;
       }
 
-      const wallets = await this.fetchWallets(chatId);
+      const wallets = await getWallets(chatId);
       const message = `⚙️ *Set Default Wallet*\n\nChoose a wallet to set as default:`;
 
       await ctx.reply(message, {
@@ -259,13 +251,8 @@ Use /deposit to add funds or /setdefault to change your default wallet.
 
     const selectedWallet = userState.wallets[choice - 1];
 
-    console.log(selectedWallet);
     try {
-      await axios.post(
-        `${this.API_BASE_URL}/api/wallets/default`,
-        { walletId: selectedWallet.id },
-        { headers: await authService.getHeaders(chatId) }
-      );
+      await setDefaultWallet(chatId, selectedWallet.id);
 
       await ctx.reply(
         "✅ Default wallet updated successfully!\n\n" +
@@ -299,14 +286,8 @@ Use /deposit to add funds or /setdefault to change your default wallet.
     }
 
     try {
-      const response = await axios.get(
-        `${this.API_BASE_URL}/api/wallets/default`,
-        {
-          headers: await authService.getHeaders(chatId),
-        }
-      );
+      const defaultWallet = await getDefaultWallet(chatId);
 
-      const defaultWallet = response.data;
       if (!defaultWallet) {
         await ctx.reply(
           "⚠️ No default wallet found.\n\n" +
@@ -358,11 +339,8 @@ Use /transactions to check your deposit status.
     }
 
     try {
-      const response = await axios.get(`${this.API_BASE_URL}/api/transfers`, {
-        headers: await authService.getHeaders(chatId),
-      });
+      const transactions = await getTransfers(chatId);
 
-      const transactions = response.data;
       if (!transactions || transactions.length === 0) {
         await ctx.reply(
           "📊 No transactions found.\n\n" +
@@ -403,16 +381,6 @@ Use /wallets to manage your wallets or /balance to check current balances.
           "Please try again or contact support if the issue persists"
       );
     }
-  }
-
-  private async fetchWallets(chatId: number): Promise<Wallet[]> {
-    const response = await axios.get<Wallet[]>(
-      `${this.API_BASE_URL}/api/wallets`,
-      {
-        headers: await authService.getHeaders(chatId),
-      }
-    );
-    return response.data;
   }
 }
 

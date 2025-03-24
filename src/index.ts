@@ -274,7 +274,7 @@ bot.callbackQuery("confirm", async (ctx) => {
     switch (userState.action) {
       case "email_transfer":
         await axios.post(
-          `${transferHandler["API_BASE_URL"]}/api/transfers/send`,
+          `${process.env.COPPERX_API_BASE_URL}/api/transfers/send`,
           {
             recipient: userState.recipient,
             amount: (Number(userState.amount) * Math.pow(10, 8)).toString(),
@@ -286,7 +286,7 @@ bot.callbackQuery("confirm", async (ctx) => {
 
       case "wallet_transfer":
         await axios.post(
-          `${transferHandler["API_BASE_URL"]}/api/transfers/wallet-withdraw`,
+          `${process.env.COPPERX_API_BASE_URL}/api/transfers/wallet-withdraw`,
           {
             walletAddress: userState.recipient,
             amount: (Number(userState.amount) * Math.pow(10, 8)).toString(),
@@ -299,7 +299,7 @@ bot.callbackQuery("confirm", async (ctx) => {
       case "bank_withdrawal":
         if (userState.quote) {
           await axios.post(
-            `${transferHandler["API_BASE_URL"]}/api/transfers/offramp`,
+            `${process.env.COPPERX_API_BASE_URL}/api/transfers/offramp`,
             {
               quotePayload: userState.quote.quotePayload,
               quoteSignature: userState.quote.quoteSignature,
